@@ -1,17 +1,38 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mishkah Framework Playground</title>
+    <title>Mishkah Lab - مختبر مشكاة</title>
+
     <!-- Load Mishkah Core -->
     <script src="../lib/mishkah.js" data-ui></script>
+
     <!-- Load CodeMirror Component -->
     <script src="../lib/mishkah-ui-codemirror.js"></script>
+
+    <!-- Load Marked (Markdown Parser) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="../lib/mishkah-indexeddb.js"></script>
+
+
+    <!-- Load Examples Data -->
+    <script src="example-cps.js"></script>
+
     <!-- Load Application Logic -->
     <script src="app.js" defer></script>
+
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
             margin: 0;
             padding: 0;
@@ -31,16 +52,87 @@
         }
 
         ::-webkit-scrollbar-track {
-            background: #f1f1f1;
+            background: var(--muted);
         }
 
         ::-webkit-scrollbar-thumb {
-            background: #ccc;
+            background: var(--muted-foreground);
             border-radius: 4px;
         }
 
         ::-webkit-scrollbar-thumb:hover {
-            background: #aaa;
+            background: var(--foreground);
+        }
+
+        /* Markdown styles */
+        .prose {
+            max-width: 65ch;
+        }
+
+        .prose h1 {
+            font-size: 2.25rem;
+            font-weight: 800;
+            margin-top: 0;
+            margin-bottom: 0.8888889em;
+            line-height: 1.1111111;
+        }
+
+        .prose h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-top: 2em;
+            margin-bottom: 1em;
+            line-height: 1.3333333;
+        }
+
+        .prose h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-top: 1.6em;
+            margin-bottom: 0.6em;
+            line-height: 1.6;
+        }
+
+        .prose p {
+            margin-top: 1.25em;
+            margin-bottom: 1.25em;
+            line-height: 1.75;
+        }
+
+        .prose ul,
+        .prose ol {
+            margin-top: 1.25em;
+            margin-bottom: 1.25em;
+            padding-left: 1.625em;
+        }
+
+        .prose li {
+            margin-top: 0.5em;
+            margin-bottom: 0.5em;
+        }
+
+        .prose strong {
+            font-weight: 600;
+        }
+
+        .prose code {
+            background: var(--muted);
+            padding: 0.2em 0.4em;
+            border-radius: 0.25rem;
+            font-size: 0.875em;
+        }
+
+        .prose pre {
+            background: var(--muted);
+            padding: 1em;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            margin: 1.5em 0;
+        }
+
+        .prose pre code {
+            background: transparent;
+            padding: 0;
         }
     </style>
 </head>
