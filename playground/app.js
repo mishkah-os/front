@@ -15,12 +15,14 @@ function startApp() {
     const MDB = window.MishkahIndexedDB;
     const EXAMPLES = window.EXAMPLES;
     const FRAMEWORKS = window.FRAMEWORKS;
+
     // Initialize IndexedDB
     const dbAdapter = MDB.createAdapter({
         dbName: 'mishkah-lab',
         version: 1,
-        fallback: 'memory' // لو IndexedDB مش متاح
+        fallback: 'memory'
     });
+
     // ============================================================
     // 1. i18n Dictionary
     // ============================================================
@@ -32,6 +34,7 @@ function startApp() {
         'code': { ar: 'الكود', en: 'Code' },
         'preview': { ar: 'المعاينة', en: 'Preview' },
         'run': { ar: 'تشغيل', en: 'Run' },
+        'reset': { ar: 'استعادة الأصلي', en: 'Reset Code' },
         'add_example': { ar: 'إضافة مثال', en: 'Add Example' },
         'edit_example': { ar: 'تعديل مثال', en: 'Edit Example' },
         'delete_example': { ar: 'حذف مثال', en: 'Delete Example' },
@@ -40,7 +43,8 @@ function startApp() {
         'example_title': { ar: 'عنوان المثال', en: 'Example Title' },
         'example_description': { ar: 'الوصف', en: 'Description' },
         'save': { ar: 'حفظ', en: 'Save' },
-        'cancel': { ar: 'إلغاء', en: 'Cancel' }
+        'cancel': { ar: 'إلغاء', en: 'Cancel' },
+        'confirm_reset': { ar: 'هل أنت متأكد من استعادة الكود الأصلي؟ سيتم فقدان جميع التغييرات.', en: 'Are you sure you want to reset? All changes will be lost.' }
     };
 
     // ============================================================
@@ -57,9 +61,18 @@ function startApp() {
         },
         activeExample: 'counter',
         activeFramework: 'vanilla',
-        code: EXAMPLES[0].code.vanilla,
-        previewSrc: EXAMPLES[0].code.vanilla,
-        showReadme: false
+        code: '', // Will be loaded async
+        previewSrc: '',
+        showReadme: false,
+
+        // Modal State
+        showModal: false,
+        modalMode: 'add', // 'add' | 'edit'
+        modalSize: 'lg',
+
+        // Persistence State
+        examples: [...EXAMPLES], // Start with static, merge dynamic later
+        hasUserCode: false // Track if current example has user overrides
     };
 
     // ============================================================
@@ -92,13 +105,237 @@ function startApp() {
 </body>
 </html>`;
         }
+        // For HTMLx, we need to inject the library and render the template
+        if (framework === 'mishkah-htmlx') {
+            return `<!DOCTYPE html>
+<html>
+<head>
+    <script src="../lib/mishkah.js" data-ui data-htmlx></script>
+    <link rel="stylesheet" href="https://cdn.tailwindcss.com">
+</head>
+<body>
+    <div id="app"></div>
+    ${code}
+    <script>
+        window.addEventListener('load', function() {
+            // Find the template in the code
+            var template = document.querySelector('template#main');
+            if (template && window.Mishkah && window.Mishkah.app) {
+                Mishkah.app.make({
+                    templates: [template],
+                    env: { theme: 'dark', lang: 'ar' }
+                });
+            }
+        });
+    </script>
+</body>
+</html>`;
+        }
         return code;
+    }
+
+    // Debounce function for auto-save
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    // Auto-save with debounce
+    const autoSave = debounce(async (exampleId, framework, code, ctx) => {
+        if (!exampleId || !framework) return;
+
+        // Save to userCode field in the example
+        // Skip if code is invalid or empty
+        if (typeof code !== 'string' || code.trim().length === 0) return;
+
+        const saved = await dbAdapter.load('examples');
+        const list = Array.isArray(saved?.data) ? saved.data : [];
+        const example = list.find(ex => ex.id === exampleId);
+
+        if (example) {
+            if (!example.userCode) example.userCode = {};
+            example.userCode[framework] = code;
+            await dbAdapter.save('examples', list);
+        }
+
+        // Update UI to show reset button
+        ctx.setState(s => ({ ...s, hasUserCode: true }));
+        console.log('Auto-saved code for', exampleId, framework);
+    }, 1000);
+
+    // Initialize database on first load
+    async function initializeDatabase() {
+        const saved = await dbAdapter.load('examples');
+
+        // If database is empty, initialize with EXAMPLES
+        if (!saved || !saved.data || saved.data.length === 0) {
+            console.log('🔧 Initializing database for first time...');
+
+            const initialExamples = EXAMPLES.map(ex => ({
+                ...ex,
+                userCode: { ...ex.code } // Copy code to userCode initially
+            }));
+
+            await dbAdapter.save('examples', initialExamples);
+            console.log('✅ Database initialized with', initialExamples.length, 'examples');
+            return initialExamples;
+        }
+
+        return saved.data;
+    }
+
+    // Load code (userCode > implementations > fallback)
+    async function loadCodeFor(exampleId, framework) {
+        const examples = await dbAdapter.load('examples');
+        const allExamples = Array.isArray(examples?.data) ? examples.data : [];
+
+        const example = allExamples.find(ex => ex.id === exampleId);
+        if (!example) return { code: '', isUser: false };
+
+        // Check userCode first (old structure for backward compatibility)
+        const userCode = example.userCode?.[framework];
+        if (userCode && userCode.trim().length > 0) {
+            return { code: userCode, isUser: true };
+        }
+
+        // Fallback to implementations array (new structure)
+        if (example.implementations && Array.isArray(example.implementations)) {
+            const impl = example.implementations.find(i => i.framework === framework);
+            if (impl && impl.code) {
+                return { code: impl.code, isUser: false };
+            }
+        }
+
+        // Fallback to old code object structure (backward compatibility)
+        const originalCode = example.code?.[framework];
+        return {
+            code: typeof originalCode === 'string' ? originalCode : '',
+            isUser: false
+        };
     }
 
     // ============================================================
     // 4. Event Handlers
     // ============================================================
     const orders = {
+        'app.init': {
+            on: ['init'],
+            handler: async (e, ctx) => {
+                console.log('🔍 [app.init] Starting...');
+
+                // Check if EXAMPLES is loaded
+                console.log('🔍 [app.init] EXAMPLES:', window.EXAMPLES);
+                if (!window.EXAMPLES || !Array.isArray(window.EXAMPLES) || window.EXAMPLES.length === 0) {
+                    console.error('❌ EXAMPLES not loaded yet!');
+                    return;
+                }
+
+                // Initialize database if empty
+                // Initialize database if empty
+                console.log('🔍 [app.init] Loading from IndexedDB...');
+
+                // Try to load first
+                let currentData = await dbAdapter.load('examples');
+                let allExamples = [];
+
+                if (!currentData || !currentData.data || currentData.data.length === 0) {
+                    // Initialize if empty
+                    console.log('🔧 Initializing database for first time...');
+                    allExamples = await initializeDatabase();
+                } else {
+                    // Use existing data
+                    console.log('🔍 [app.init] Found existing data');
+                    allExamples = currentData.data;
+                }
+
+                console.log('🔍 [app.init] All examples count:', allExamples.length);
+
+                const state = ctx.getState();
+                const { code, isUser } = await loadCodeFor(state.activeExample, state.activeFramework);
+
+                ctx.setState(s => ({
+                    ...s,
+                    examples: allExamples,
+                    code: code,
+                    hasUserCode: isUser,
+                    previewSrc: generatePreview(state.activeFramework, code)
+                }));
+
+                // Force CodeMirror update
+                setTimeout(() => {
+                    if (M.UI.CodeMirror.setValue) {
+                        M.UI.CodeMirror.setValue('editor', code);
+                    }
+                }, 50);
+
+                console.log('✅ [app.init] Completed!');
+            }
+        },
+
+        'code.change': {
+            // Triggered by CodeMirror onChange
+            handler: (newCode, ctx) => {
+                const state = ctx.getState();
+
+                // STRICT CHECK: Reject if it's an event object or not a string
+                if (typeof newCode === 'object') {
+                    console.warn('[code.change] Ignored event object:', newCode);
+                    return;
+                }
+
+                if (typeof newCode !== 'string') {
+                    console.warn('[code.change] Ignored non-string value:', typeof newCode);
+                    return;
+                }
+
+                console.log('[code.change] newCode length:', newCode.length);
+
+                ctx.setState(s => ({ ...s, code: newCode }));
+                autoSave(state.activeExample, state.activeFramework, newCode, ctx);
+            }
+        },
+
+        'code.reset': {
+            on: ['click'],
+            gkeys: ['reset-btn'],
+            handler: async (e, ctx) => {
+                const state = ctx.getState();
+                if (!confirm(t('confirm_reset', state))) return;
+
+                // Delete userCode for this framework
+                const saved = await dbAdapter.load('examples');
+                const list = Array.isArray(saved?.data) ? saved.data : [];
+                const example = list.find(ex => ex.id === state.activeExample);
+
+                if (example && example.userCode) {
+                    delete example.userCode[state.activeFramework];
+                    await dbAdapter.save('examples', list);
+                }
+
+                // Reload original
+                const { code } = await loadCodeFor(state.activeExample, state.activeFramework);
+
+                ctx.setState(s => ({
+                    ...s,
+                    code: code,
+                    hasUserCode: false,
+                    previewSrc: generatePreview(state.activeFramework, code)
+                }));
+
+                // Force CodeMirror update
+                if (M.UI.CodeMirror.setValue) {
+                    M.UI.CodeMirror.setValue('editor', code);
+                }
+            }
+        },
+
         'example.add': {
             on: ['click'],
             gkeys: ['add-example-btn'],
@@ -117,22 +354,27 @@ function startApp() {
 
         'modal.close': {
             on: ['click'],
-            gkeys: ['close-modal-btn'],
+            gkeys: ['ui:modal:close', 'close-modal-btn'], // Support both
             handler: (e, ctx) => {
                 ctx.setState(s => ({ ...s, showModal: false }));
             }
         },
 
-        'example.save': {
+        'example.save_form': {
             on: ['click'],
             gkeys: ['save-example-btn'],
             handler: async (e, ctx) => {
-                const formData = {
-                    id: Date.now().toString(),
-                    title: {
-                        ar: document.getElementById('title-ar').value,
-                        en: document.getElementById('title-en').value
-                    },
+                const state = ctx.getState();
+                const isEdit = state.modalMode === 'edit';
+
+                // Collect form data
+                const titleAr = document.getElementById('title-ar').value;
+                const titleEn = document.getElementById('title-en').value;
+                const id = isEdit ? state.activeExample : Date.now().toString();
+
+                const newExample = {
+                    id: id,
+                    title: { ar: titleAr, en: titleEn },
                     description: {
                         ar: document.getElementById('desc-ar').value,
                         en: document.getElementById('desc-en').value
@@ -151,18 +393,36 @@ function startApp() {
                     }
                 };
 
-                // Save to IndexedDB
-                await dbAdapter.save('examples', formData);
-
-                // Reload examples
+                // Save to 'examples' table
                 const saved = await dbAdapter.load('examples');
-                const allExamples = [...EXAMPLES, ...(saved?.data || [])];
+                const list = Array.isArray(saved?.data) ? saved.data : [];
+
+                if (isEdit) {
+                    const idx = list.findIndex(ex => ex.id === id);
+                    if (idx >= 0) list[idx] = newExample;
+                    else list.push(newExample);
+                } else {
+                    list.push(newExample);
+                }
+
+                await dbAdapter.save('examples', list);
+
+                // Reload
+                const reloaded = await dbAdapter.load('examples');
+                const allExamples = [...EXAMPLES, ...(reloaded?.data || [])];
 
                 ctx.setState(s => ({
                     ...s,
                     showModal: false,
-                    examples: allExamples
+                    examples: allExamples,
+                    activeExample: id,
+                    code: newExample.code[s.activeFramework],
+                    previewSrc: generatePreview(s.activeFramework, newExample.code[s.activeFramework])
                 }));
+
+                if (M.UI.CodeMirror.setValue) {
+                    M.UI.CodeMirror.setValue('editor', newExample.code[state.activeFramework]);
+                }
             }
         },
 
@@ -171,12 +431,15 @@ function startApp() {
             gkeys: ['download-json-btn'],
             handler: async (e, ctx) => {
                 const saved = await dbAdapter.load('examples');
-                const jsonData = JSON.stringify(saved?.data || [], null, 2);
+                // Combine built-ins with saved
+                const allData = [...EXAMPLES, ...(saved?.data || [])];
+
+                const jsonData = JSON.stringify(allData, null, 2);
                 const blob = new Blob([jsonData], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'mishk ah-lab-examples.json';
+                a.download = 'mishkah-lab-examples.json';
                 a.click();
                 URL.revokeObjectURL(url);
             }
@@ -191,71 +454,100 @@ function startApp() {
                 input.accept = '.json';
                 input.onchange = async (e) => {
                     const file = e.target.files[0];
-                    const text = await file.text();
-                    const data = JSON.parse(text);
-                    await dbAdapter.save('examples', data);
-                    const allExamples = [...EXAMPLES, ...data];
-                    ctx.setState(s => ({ ...s, examples: allExamples }));
+                    if (!file) return;
+
+                    try {
+                        const text = await file.text();
+                        const data = JSON.parse(text);
+                        if (!Array.isArray(data)) throw new Error('Invalid JSON format');
+
+                        // Merge imported data with existing
+                        const current = await dbAdapter.load('examples');
+                        const list = Array.isArray(current?.data) ? current.data : [];
+
+                        data.forEach(item => {
+                            const exists = list.findIndex(ex => ex.id === item.id);
+                            if (exists >= 0) list[exists] = item;
+                            else list.push(item);
+                        });
+
+                        await dbAdapter.save('examples', list);
+
+                        const saved = await dbAdapter.load('examples');
+                        const allExamples = [...EXAMPLES, ...(saved?.data || [])];
+                        ctx.setState(s => ({ ...s, examples: allExamples }));
+                        alert('Examples imported successfully!');
+                    } catch (err) {
+                        console.error(err);
+                        alert('Failed to import JSON');
+                    }
                 };
                 input.click();
             }
         },
+
         'example.switch': {
             on: ['click'],
             gkeys: ['ex-btn'],
-            handler: (e, ctx) => {
-                const exampleId = e.target.closest('button').dataset.exampleId;
-                const example = EXAMPLES.find(ex => ex.id === exampleId);
-                if (!example) return;
+            handler: async (e, ctx) => {
+                const btn = e.target.closest('button');
+                if (!btn) return;
+                const exampleId = btn.dataset.exampleId;
+                const state = ctx.getState();
 
-                const framework = ctx.getState().activeFramework;
-                const code = example.code[framework] || '';
+                const { code, isUser } = await loadCodeFor(exampleId, state.activeFramework);
 
                 ctx.setState(s => ({
                     ...s,
                     activeExample: exampleId,
                     code: code,
-                    previewSrc: generatePreview(framework, code),
+                    hasUserCode: isUser,
+                    previewSrc: generatePreview(state.activeFramework, code),
                     showReadme: false
                 }));
 
-                // Recreate CodeMirror with new code
-
+                if (M.UI.CodeMirror.setValue) {
+                    M.UI.CodeMirror.setValue('editor', code);
+                }
             }
         },
 
         'framework.switch': {
             on: ['click'],
             gkeys: ['fw-btn'],
-            handler: (e, ctx) => {
-                const framework = e.target.closest('button').dataset.framework;
-                const exampleId = ctx.getState().activeExample;
-                const example = EXAMPLES.find(ex => ex.id === exampleId);
-                if (!example) return;
+            handler: async (e, ctx) => {
+                const btn = e.target.closest('button');
+                if (!btn) return;
+                const framework = btn.dataset.framework;
+                const state = ctx.getState();
 
-                const code = example.code[framework] || '';
+                const { code, isUser } = await loadCodeFor(state.activeExample, framework);
                 const lang = FRAMEWORKS[framework]?.lang || 'html';
 
                 ctx.setState(s => ({
                     ...s,
                     activeFramework: framework,
                     code: code,
+                    hasUserCode: isUser,
                     previewSrc: generatePreview(framework, code)
                 }));
+
+                // Update CodeMirror
                 setTimeout(() => {
-                    const container = document.getElementById('editor');
-                    if (container) {
-                        //  container.innerHTML = '';
-                        M.UI.CodeMirror({
-                            id: 'editor',
-                            value: code,
-                            lang: lang,
-                            theme: 'dracula',
-                            height: '100%',
-                            style: 'height: -webkit-fill-available;'
-                        });
+                    // Reset last value tracking to allow onChange for new framework
+                    window._lastCodeMirrorValue = '';
+
+                    if (M.UI.CodeMirror.setValue) {
+                        // Ensure code is a string
+                        const safeCode = typeof code === 'string' ? code : '';
+                        M.UI.CodeMirror.setValue('editor', safeCode);
+                        // We might need to update mode too, but M.UI.CodeMirror handles it if we re-render or use instance
+                        const instance = M.UI.CodeMirror.getInstance('editor');
+                        if (instance) {
+                            instance.setOption('mode', lang === 'html' ? 'htmlmixed' : lang);
+                        }
                     }
-                }, 100);
+                }, 50);
             }
         },
 
@@ -264,40 +556,30 @@ function startApp() {
             gkeys: ['run-btn'],
             handler: (e, ctx) => {
                 const state = ctx.getState();
-
-                // Get current code from CodeMirror instance
-                const editorInstance = M.UI.CodeMirror.getInstance('editor');
-                const currentCode = editorInstance ? editorInstance.getValue() : state.code;
-
-                // Update state with current code AND preview
-                const preview = generatePreview(state.activeFramework, currentCode);
+                // Code is already in state due to onChange
+                const preview = generatePreview(state.activeFramework, state.code);
                 ctx.setState(s => ({
                     ...s,
-                    code: currentCode,  // ← Save current code to state
                     previewSrc: preview
                 }));
             }
         },
+
         'readme.toggle': {
             on: ['click'],
             gkeys: ['readme-btn'],
             handler: (e, ctx) => {
-                const currentState = ctx.getState();
-                const newShowReadme = !currentState.showReadme;
-
-                ctx.setState(s => ({ ...s, showReadme: newShowReadme }));
-                console.log("newShowReadme", newShowReadme);
-                // Update innerHTML after re-render
-                if (newShowReadme) {
-                    setTimeout(() => {
-                        const viewer = document.getElementById('readme-viewer');
-                        if (viewer) {
-                            const example = EXAMPLES.find(ex => ex.id === currentState.activeExample);
-                            const readme = example?.readme[currentState.env.lang] || '';
-                            viewer.innerHTML = marked?.parse ? marked.parse(readme) : `<pre>${readme}</pre>`;
-                        }
-                    }, 100);
-                }
+                ctx.setState(s => ({ ...s, showReadme: !s.showReadme }));
+                // Render markdown logic...
+                setTimeout(() => {
+                    const viewer = document.getElementById('readme-viewer');
+                    if (viewer) {
+                        const state = ctx.getState();
+                        const example = state.examples.find(ex => ex.id === state.activeExample);
+                        const readme = example?.readme[state.env.lang] || '';
+                        viewer.innerHTML = window.marked?.parse ? window.marked.parse(readme) : `<pre>${readme}</pre>`;
+                    }
+                }, 100);
             }
         },
 
@@ -330,6 +612,14 @@ function startApp() {
                     ...s,
                     env: { ...s.env, lang: newLang, dir: newDir }
                 }));
+            }
+        },
+
+        'wiki.toggle': {
+            on: ['click'],
+            gkeys: ['wiki-toggle-btn'],
+            handler: (e, ctx) => {
+                ctx.setState(s => ({ ...s, activeView: s.activeView === 'wiki' ? 'code' : 'wiki' }));
             }
         }
     };
@@ -365,7 +655,7 @@ function startApp() {
                         style: 'color: var(--muted-foreground);'
                     }
                 }, [t('examples', db)]),
-                ...EXAMPLES.map(example => {
+                ...db.examples.map(example => {
                     const isActive = example.id === db.activeExample;
                     return D.Forms.Button({
                         attrs: {
@@ -382,78 +672,6 @@ function startApp() {
 
             D.Containers.Div({
                 attrs: { class: 'p-4' }
-            }, [
-                D.Text.H2({
-                    attrs: {
-                        class: 'text-sm font-bold mb-2 uppercase',
-                        style: 'color: var(--muted-foreground);'
-                    }
-                }, [t('frameworks', db)]),
-                ...Object.keys(FRAMEWORKS).map(fw => {
-                    const isActive = fw === db.activeFramework;
-                    return D.Forms.Button({
-                        attrs: {
-                            'data-m-gkey': 'fw-btn',
-                            'data-framework': fw,
-                            class: `w-full text-left px-3 py-2 rounded mb-1 transition-colors ${isActive ? 'font-bold' : ''}`,
-                            style: isActive
-                                ? 'background: var(--primary); color: white;'
-                                : 'background: transparent; color: var(--foreground);'
-                        }
-                    }, [FRAMEWORKS[fw].name[db.env.lang]]);
-                })
-            ]),// بعد frameworks section
-            D.Containers.Div({
-                attrs: {
-                    class: 'p-4',
-                    style: 'border-top: 1px solid var(--border);'
-                }
-            }, [
-                D.Text.H2({
-                    attrs: {
-                        class: 'text-sm font-bold mb-2 uppercase',
-                        style: 'color: var(--muted-foreground);'
-                    }
-                }, [t('examples', db) + ' ' + (db.env.lang === 'ar' ? 'الإدارة' : 'Management')]),
-
-                D.Forms.Button({
-                    attrs: {
-                        'data-m-gkey': 'add-example-btn',
-                        class: 'w-full px-3 py-2 mb-2 rounded font-bold text-white',
-                        style: 'background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);'
-                    }
-                }, ['➕ ' + t('add_example', db)]),
-
-                D.Forms.Button({
-                    attrs: {
-                        'data-m-gkey': 'edit-example-btn',
-                        class: 'w-full px-3 py-2 mb-2 rounded',
-                        style: 'background: var(--muted); color: var(--foreground);'
-                    }
-                }, ['✏️ ' + t('edit_example', db)]),
-
-                D.Forms.Button({
-                    attrs: {
-                        'data-m-gkey': 'download-json-btn',
-                        class: 'w-full px-3 py-2 mb-2 rounded',
-                        style: 'background: var(--muted); color: var(--foreground);'
-                    }
-                }, ['⬇️ ' + t('download_json', db)]),
-
-                D.Forms.Button({
-                    attrs: {
-                        'data-m-gkey': 'import-json-btn',
-                        class: 'w-full px-3 py-2 rounded',
-                        style: 'background: var(--muted); color: var(--foreground);'
-                    }
-                }, ['⬆️ ' + t('import_json', db)])
-            ]),
-
-            D.Containers.Div({
-                attrs: {
-                    class: 'p-4',
-                    style: 'border-top: 1px solid var(--border);'
-                }
             }, [
                 D.Forms.Button({
                     attrs: {
@@ -474,32 +692,59 @@ function startApp() {
     }
 
     function Toolbar(db) {
+        const isWiki = db.activeView === 'wiki';
+        const hasWiki = !!db.activeWikiId;
+        const example = db.examples.find(ex => ex.id === db.activeExample);
+
         return D.Containers.Div({
             attrs: {
-                class: 'flex items-center justify-between px-4 py-2',
-                style: 'background: var(--card); border-bottom: 1px solid var(--border); height: 3.5rem;'
+                class: 'flex items-center justify-between px-4 py-2 border-b bg-white',
+                style: 'height: 3.5rem; border-color: var(--border);'
             }
         }, [
-            D.Text.H2({
-                attrs: {
-                    class: 'text-lg font-bold',
-                    style: 'color: var(--foreground);'
-                }
-            }, [
-                EXAMPLES.find(ex => ex.id === db.activeExample)?.title[db.env.lang] || ''
-            ]),
-            D.Containers.Div({
-                attrs: { class: 'flex gap-2' }
-            }, [
-                D.Forms.Button({
+            // Left: Frameworks & Wiki Toggle
+            D.Containers.Div({ attrs: { class: 'flex items-center gap-2' } }, [
+                ...Object.keys(FRAMEWORKS).map(fwId => {
+                    const fwData = FRAMEWORKS[fwId];
+                    const isActive = db.activeFramework === fwId;
+                    return M.UI.Button({
+                        variant: isActive ? 'default' : 'ghost',
+                        size: 'sm',
+                        attrs: {
+                            'data-m-gkey': 'fw-btn',
+                            'data-framework': fwId,
+                            style: isActive
+                                ? 'border-bottom: 3px solid var(--primary); font-weight: bold;'
+                                : 'border-bottom: 3px solid transparent;'
+                        }
+                    }, [fwData.name[db.env.lang]]);
+                }),
+
+                // Wiki Toggle
+                M.UI.Button({
+                    variant: isWiki ? 'default' : 'outline',
+                    size: 'sm',
                     attrs: {
-                        'data-m-gkey': 'readme-btn',
-                        class: 'px-4 py-2 rounded font-medium transition-colors',
-                        style: db.showReadme
-                            ? 'background: var(--accent); color: white;'
-                            : 'background: var(--muted); color: var(--foreground);'
+                        class: 'ml-4 gap-2',
+                        'data-m-gkey': 'wiki-toggle-btn'
                     }
-                }, [t('readme', db)]),
+                }, [
+                    '📚 ',
+                    isWiki ? 'Code' : 'Wiki'
+                ])
+            ]),
+
+            // Right: Actions
+            D.Containers.Div({ attrs: { class: 'flex items-center gap-2' } }, [
+                db.hasUserCode ? M.UI.Button({
+                    variant: 'destructive',
+                    size: 'sm',
+                    attrs: { 'data-m-gkey': 'reset-btn' }
+                }, [t('reset', db)]) : null,
+                M.UI.Button({ variant: 'outline', size: 'sm', attrs: { 'data-m-gkey': 'add-example-btn' } }, [t('add_example', db)]),
+                M.UI.Button({ variant: 'outline', size: 'sm', attrs: { 'data-m-gkey': 'edit-example-btn' } }, [t('edit_example', db)]),
+                M.UI.Button({ variant: 'ghost', size: 'sm', attrs: { 'data-m-gkey': 'download-json-btn' } }, ['⬇️']),
+                M.UI.Button({ variant: 'ghost', size: 'sm', attrs: { 'data-m-gkey': 'import-json-btn' } }, ['⬆️']),
                 D.Forms.Button({
                     attrs: {
                         'data-m-gkey': 'run-btn',
@@ -512,6 +757,7 @@ function startApp() {
     }
 
     function EditorPane(db) {
+        // We use M.UI.CodeMirror with onChange handler
         return D.Containers.Div({
             attrs: {
                 class: 'flex-1 overflow-auto',
@@ -520,24 +766,68 @@ function startApp() {
         }, [
             M.UI.CodeMirror({
                 id: 'editor',
-                value: db.code,
+                value: typeof db.code === 'string' ? db.code : '',
                 lang: FRAMEWORKS[db.activeFramework]?.lang || 'html',
                 theme: 'dracula',
                 height: '100%',
-                style: 'height: -webkit-fill-available;'
+                style: 'height: -webkit-fill-available;',
+                onChange: (val) => {
+                    // Get value from editor instance if val is undefined
+                    if (typeof val !== 'string') {
+                        const instance = M.UI.CodeMirror.getInstance('editor');
+                        val = instance ? instance.getValue() : '';
+                    }
+
+                    // Skip if not a valid string or empty
+                    if (typeof val !== 'string' || val.trim().length === 0) return;
+
+                    // Prevent duplicate onChange events with same value
+                    if (!window._lastCodeMirrorValue) window._lastCodeMirrorValue = '';
+                    if (window._lastCodeMirrorValue === val) return;
+                    window._lastCodeMirrorValue = val;
+
+                    const event = new CustomEvent('code-change', { detail: val });
+                    document.dispatchEvent(event);
+                }
             })
         ]);
     }
 
-    function PreviewPane(db) {
-        console.log("db", db);
-        // If README is shown, display it here instead of preview
-        console.log("db.showReadme", db.showReadme);
-        if (db.showReadme) {
-            //  const example = EXAMPLES.find(ex => ex.id === db.activeExample);
-            // const readme = example?.readme[db.env.lang] || '';
-            //  const htmlContent = marked?.parse ? marked.parse(readme) : `<pre>${readme}</pre>`;
+    // Global listener for code change to bridge CodeMirror and Mishkah State
+    // This is a bit of a hack but works for this context
+    if (!window._codeChangeListener) {
+        window._codeChangeListener = (e) => {
+            // Find the app instance and update it
+            // We need access to 'app' instance. 
+            // We can expose it globally or use a static reference.
+            if (window.MishkahApp) {
+                const ctx = {
+                    getState: window.MishkahApp.getState,
+                    setState: window.MishkahApp.setState
+                };
+                orders['code.change'].handler(e.detail, ctx);
+            }
+        };
+        document.addEventListener('code-change', window._codeChangeListener);
+    }
 
+    function PreviewPane(db) {
+        // Show Wiki if activeView is 'wiki'
+        if (db.activeView === 'wiki') {
+            return D.Containers.Div({
+                attrs: {
+                    class: 'flex-1 overflow-auto p-8',
+                    style: 'height: calc(100vh - 3.5rem); background: var(--background); border-left: 1px solid var(--border);'
+                }
+            }, [
+                M.UI.WikiViewer && db.activeWikiId ? M.UI.WikiViewer({
+                    db: db,
+                    articleId: db.activeWikiId
+                }) : D.Text.P({}, ['Please select a wiki article'])
+            ]);
+        }
+
+        if (db.showReadme) {
             return D.Containers.Div({
                 attrs: {
                     class: 'flex-1 overflow-auto p-8',
@@ -555,7 +845,6 @@ function startApp() {
             ]);
         }
 
-        // Otherwise show preview iframe
         return D.Containers.Div({
             attrs: {
                 class: 'flex-1 overflow-auto',
@@ -573,7 +862,58 @@ function startApp() {
         ]);
     }
 
+    function ExampleModal(db) {
+        const isEdit = db.modalMode === 'edit';
+        const example = db.examples.find(ex => ex.id === db.activeExample);
+
+        // Helper to get value safely
+        const val = (path, lang) => {
+            if (!isEdit || !example) return '';
+            if (lang) return example[path]?.[lang] || '';
+            return example[path] || '';
+        };
+
+        const codeVal = (fw) => {
+            if (!isEdit || !example) return '';
+            return example.code?.[fw] || '';
+        };
+
+        const formContent = D.Containers.Div({ attrs: { class: 'space-y-4' } }, [
+            // Title
+            D.Containers.Div({ attrs: { class: 'grid grid-cols-2 gap-4' } }, [
+                M.UI.Field({ id: 'title-ar', label: 'العنوان (AR)', control: M.UI.Input({ attrs: { id: 'title-ar', value: val('title', 'ar') } }) }),
+                M.UI.Field({ id: 'title-en', label: 'Title (EN)', control: M.UI.Input({ attrs: { id: 'title-en', value: val('title', 'en') } }) }),
+            ]),
+
+            // Description
+            D.Containers.Div({ attrs: { class: 'grid grid-cols-2 gap-4' } }, [
+                M.UI.Field({ id: 'desc-ar', label: 'الوصف (AR)', control: M.UI.Input({ attrs: { id: 'desc-ar', value: val('description', 'ar') } }) }),
+                M.UI.Field({ id: 'desc-en', label: 'Description (EN)', control: M.UI.Input({ attrs: { id: 'desc-en', value: val('description', 'en') } }) }),
+                M.UI.Field({ id: 'code-vanilla', label: 'Vanilla JS', control: M.UI.Textarea({ attrs: { id: 'code-vanilla', rows: 3, class: 'font-mono text-xs', style: 'min-height: 200px;', value: codeVal('vanilla') } }) }),
+                M.UI.Field({ id: 'code-jquery', label: 'jQuery', control: M.UI.Textarea({ attrs: { id: 'code-jquery', rows: 3, class: 'font-mono text-xs', style: 'min-height: 200px;', value: codeVal('jquery') } }) }),
+                M.UI.Field({ id: 'code-vue', label: 'Vue.js', control: M.UI.Textarea({ attrs: { id: 'code-vue', rows: 3, class: 'font-mono text-xs', style: 'min-height: 200px;', value: codeVal('vue') } }) }),
+                M.UI.Field({ id: 'code-react', label: 'React', control: M.UI.Textarea({ attrs: { id: 'code-react', rows: 3, class: 'font-mono text-xs', style: 'min-height: 200px;', value: codeVal('react') } }) }),
+                M.UI.Field({ id: 'code-mishkah-dsl', label: 'Mishkah DSL', control: M.UI.Textarea({ attrs: { id: 'code-mishkah-dsl', rows: 3, class: 'font-mono text-xs', style: 'min-height: 200px;', value: codeVal('mishkah-dsl') } }) }),
+                M.UI.Field({ id: 'code-mishkah-htmlx', label: 'Mishkah HTMLx', control: M.UI.Textarea({ attrs: { id: 'code-mishkah-htmlx', rows: 3, class: 'font-mono text-xs', style: 'min-height: 200px;', value: codeVal('mishkah-htmlx') } }) }),
+            ])
+        ]);
+
+        return M.UI.Modal({
+            open: db.showModal,
+            title: isEdit ? t('edit_example', db) : t('add_example', db),
+            size: db.modalSize || 'lg',
+            sizeKey: 'example-modal', // Enable resizing
+            content: formContent,
+            actions: [
+                M.UI.Button({ attrs: { gkey: 'ui:modal:close' }, variant: 'ghost' }, [t('cancel', db)]),
+                M.UI.Button({ attrs: { gkey: 'save-example-btn' }, variant: 'solid' }, [t('save', db)])
+            ]
+        });
+    }
+
     function MainLayout(db) {
+        const isWiki = db.activeView === 'wiki';
+
         return D.Containers.Div({
             attrs: {
                 class: 'flex w-screen overflow-hidden',
@@ -586,12 +926,20 @@ function startApp() {
             }, [
                 Toolbar(db),
                 D.Containers.Div({
-                    attrs: { class: 'flex-1 flex' }
-                }, [
+                    attrs: { class: 'flex-1 flex overflow-hidden' }
+                }, isWiki ? [
+                    M.UI.WikiViewer({
+                        db: db,
+                        wikiId: db.activeWikiId,
+                        onNavigate: (id) => window.Mishkah.app.setState(s => ({ ...s, activeWikiId: id }))
+                    })
+                ] : [
                     EditorPane(db),
                     PreviewPane(db)
                 ])
-            ])
+            ]),
+            // Overlays
+            ExampleModal(db)
         ]);
     }
 
@@ -599,11 +947,33 @@ function startApp() {
     // 6. Mount App
     // ============================================================
     const app = M.app.createApp(database, orders);
+    window.MishkahApp = app; // Expose for code listener
+
     M.app.setBody(MainLayout);
     app.mount('#app');
+
+    // Trigger init to load async data
+    if (orders['app.init'] && orders['app.init'].handler) {
+        orders['app.init'].handler(null, {
+            getState: app.getState,
+            setState: app.setState
+        });
+    }
 
     console.log('✅ Mishkah Lab started successfully');
 }
 
 // Start initialization
-initMishkahLab();
+// Start initialization after Mishkah Auto-Loader is ready
+if (window.MishkahAuto && window.MishkahAuto.whenReady) {
+    window.MishkahAuto.whenReady.then(function () {
+        initMishkahLab();
+    });
+} else {
+    // Fallback if Auto-Loader is not present
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initMishkahLab);
+    } else {
+        initMishkahLab();
+    }
+}

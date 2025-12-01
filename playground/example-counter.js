@@ -62,8 +62,12 @@ Perfect for comparing framework approaches!`,
 
 مثالي لمقارنة طرق الأطر المختلفة!`
       },
-      code: {
-        vanilla: `<!DOCTYPE html>
+      implementations: [
+        {
+          framework: 'vanilla'
+          , wikiId: 'vanilla-counter'
+          ,
+          code: `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -118,8 +122,12 @@ Perfect for comparing framework approaches!`,
     });
   </script>
 </body>
-</html>`,
-        jquery: `<!DOCTYPE html>
+</html>`},
+        {
+          framework: 'jquery'
+          , wikiId: 'jquery-counter'
+          ,
+          code: `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -174,8 +182,12 @@ Perfect for comparing framework approaches!`,
     });
   </script>
 </body>
-</html>`,
-        vue: `<!DOCTYPE html>
+</html>`}
+        , {
+          framework: 'vue'
+          , wikiId: 'vue-counter'
+          ,
+          code: `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -234,8 +246,13 @@ Perfect for comparing framework approaches!`,
     }).mount('#app');
   </script>
 </body>
-</html>`,
-        react: `<!DOCTYPE html>
+</html>`},
+        {
+          framework: 'react'
+          , wikiId: 'react-counter'
+          ,
+          code:
+            `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -295,8 +312,13 @@ Perfect for comparing framework approaches!`,
     root.render(<Counter />);
   </script>
 </body>
-</html>`,
-        'mishkah-dsl': `// Mishkah DSL Counter with i18n & Theme Support
+</html>`
+        },
+        {
+          framework: 'mishkah-dsl'
+          , wikiId: 'mishkah-dsl-counter'
+          ,
+          code: `// Mishkah DSL Counter with i18n & Theme Support
                 // Mishkah DSL Counter - Clean Version
 const database = {
   count: 0,
@@ -591,8 +613,12 @@ Mishkah.Head.style({
 const app = Mishkah.app.createApp(database, orders);
 Mishkah.app.setBody(App);
 app.mount('#app');
-`,
-        'mishkah-htmlx': `<!DOCTYPE html>
+`},
+        {
+          framework: 'mishkah-htmlx'
+          , wikiId: 'mishkah-htmlx-counter'
+          ,
+          code: `<!DOCTYPE html>
 <html lang="ar" dir="rtl" data-htmlx="main" data-theme="dark">
 <head>
   <meta charset="UTF-8">
@@ -735,8 +761,8 @@ app.mount('#app');
     </script>
   </template>
 </body>
-</html>`
-      }
+</html>`}
+      ]
     }
   ];
 

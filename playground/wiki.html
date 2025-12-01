@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mishkah Wiki Test</title>
+
+    <!-- Dependencies -->
+    <script src="../lib/mishkah.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Data & UI -->
+    <script src="wiki-data.js"></script>
+    <script src="wiki-ui.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #app {
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app"></div>
+
+    <script>
+        function initWikiTest() {
+            if (!window.Mishkah || !window.Mishkah.app || !window.Mishkah.UI || !window.Mishkah.UI.WikiViewer || !window.codewikidb) {
+                setTimeout(initWikiTest, 50);
+                return;
+            }
+            startWikiApp();
+        }
+
+        function startWikiApp() {
+            const M = window.Mishkah;
+
+            // Mock App State
+            const initialState = {
+                env: { lang: 'en', theme: 'light' },
+                activeWikiId: 'react',
+                wikiSearch: ''
+            };
+
+            // Simple App Setup
+            const app = M.app.createApp(initialState, {});
+
+            function AppLayout(db) {
+                const D = M.DSL;
+
+                return D.Containers.Div({
+                    attrs: { class: 'flex h-full' }
+                }, [
+                    // Sidebar
+                    D.Containers.Div({
+                        attrs: { class: 'w-64 bg-gray-100 border-r overflow-hidden' }
+                    }, [
+                        M.UI.WikiSidebar({
+                            db: db,
+                            onNavigate: (id) => app.setState(s => ({ ...s, activeWikiId: id })),
+                            onSearch: (q) => app.setState(s => ({ ...s, wikiSearch: q }))
+                        })
+                    ]),
+
+                    // Wiki Viewer Area
+                    D.Containers.Div({
+                        attrs: { class: 'flex-1 overflow-hidden' }
+                    }, [
+                        M.UI.WikiViewer({
+                            db: db,
+                            wikiId: db.activeWikiId,
+                            onNavigate: (id) => app.setState(s => ({ ...s, activeWikiId: id }))
+                        })
+                    ])
+                ]);
+            }
+
+            M.app.setBody(AppLayout);
+            app.mount('#app');
+        }
+
+        // Start initialization
+        initWikiTest();
+    </script>
+</body>
+
+</html>
