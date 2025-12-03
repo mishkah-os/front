@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Self-Closing Components</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            padding: 24px;
+            background: #f6f8fb;
+            color: #1f2d3d;
+            line-height: 1.6;
+        }
+
+        h1 {
+            margin-top: 0;
+        }
+
+        .grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .panel {
+            background: white;
+            border: 1px solid #e0e6ed;
+            border-radius: 10px;
+            padding: 16px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            color: #1a73e8;
+            margin-bottom: 8px;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #e8f0fe;
+            color: #1a73e8;
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+    </style>
+    <script src="mishkah.core.js"></script>
+    <script src="mishkah-react.js"></script>
+</head>
+<body>
+    <h1>🧪 Dynamic Self-Closing Tag Test</h1>
+    <p>This page validates multiple instances of the same dynamic component along with self-closing tags.</p>
+    <div id="app"></div>
+
+    <script>
+        const { html, render } = Mishkah.React;
+        const M = Mishkah;
+        M.UI = M.UI || {};
+
+        M.UI.Panel = ({ title }, children) => {
+            return M.h('section', 'Containers', { attrs: { class: 'panel' } }, [
+                M.h('header', 'Text', { attrs: { class: 'panel-header' } }, [title]),
+                ...children
+            ]);
+        };
+
+        M.UI.Icon = ({ name }) => {
+            return M.h('span', 'Text', { attrs: { 'aria-label': name, class: 'pill' } }, [
+                '★', ` ${name}`
+            ]);
+        };
+
+        function App() {
+            const panels = ['Alpha', 'Beta', 'Gamma'];
+
+            return html`
+                <div class="grid">
+                    ${panels.map(label => html`
+                        <${M.UI.Panel} title=${label}>
+                            <p>This card proves closing tags pair with the right opening tag.</p>
+                            <${M.UI.Icon} name="check" />
+                        </${M.UI.Panel}>
+                    `)}
+                </div>
+            `;
+        }
+
+        render(App, document.getElementById('app'));
+    </script>
+</body>
+</html>
