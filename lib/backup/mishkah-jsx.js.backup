@@ -5,11 +5,6 @@
     var M = global.Mishkah || {};
     var React = M.React || {};
 
-    function startsWithES5(str, prefix) {
-        if (str == null || prefix == null) return false;
-        return String(str).indexOf(String(prefix)) === 0;
-    }
-
     // ===================================================================
     // JSX Tokenizer
     // ===================================================================
@@ -106,7 +101,7 @@
                     var expr = code.substring(i + 1, exprEnd);
 
                     // Check if comment: {/* */}
-                    if (startsWithES5(expr.trim(), '/*')) {
+                    if (expr.trim().startsWith('/*')) {
                         tokens.push({
                             type: TOKEN_TYPES.JSX_COMMENT,
                             value: expr,
@@ -261,41 +256,6 @@
     }
 
     /**
-     * Skip over template literal, including nested ${...} expressions.
-     * This ensures JSX-like text inside backticks (e.g., {//})
-     * is treated as plain string content and not parsed as JSX.
-     */
-    function skipTemplateLiteral(code, start) {
-        var i = start + 1;
-        var len = code.length;
-
-        while (i < len) {
-            var char = code[i];
-
-            // Escape sequence (including escaped backticks)
-            if (char === '\\') {
-                i += 2;
-                continue;
-            }
-
-            // Template literal interpolation
-            if (char === '$' && code[i + 1] === '{') {
-                i = findMatchingBrace(code, i + 1) + 1;
-                continue;
-            }
-
-            // End of template literal
-            if (char === '`') {
-                return i;
-            }
-
-            i++;
-        }
-
-        return i;
-    }
-
-    /**
      * Find matching closing brace
      */
     function findMatchingBrace(code, start) {
@@ -306,13 +266,10 @@
         while (i < len && depth > 0) {
             var char = code[i];
 
-            // Skip strings and template literals entirely
-            if (char === '`') {
-                i = skipTemplateLiteral(code, i) + 1;
-                continue;
-            }
-            if (char === '"' || char === "'") {
-                i = skipString(code, i) + 1;
+            // Skip strings (including template literals)
+            if (char === '"' || char === "'" || char === '`') {
+                var stringEnd = skipString(code, i);
+                i = stringEnd + 1;
                 continue;
             }
 
@@ -338,13 +295,10 @@
     }
 
     /**
-     * Skip over string literal (single or double quotes). Backticks are
-     * handled by skipTemplateLiteral to preserve ${...} depth handling.
+     * Skip over string literal
      */
     function skipString(code, start) {
         var quote = code[start];
-        if (quote === '`') return skipTemplateLiteral(code, start);
-
         var i = start + 1;
         var len = code.length;
 
@@ -360,6 +314,12 @@
             // End of string
             if (char === quote) {
                 return i;
+            }
+
+            // Template literal interpolation
+            if (quote === '`' && char === '$' && code[i + 1] === '{') {
+                i = findMatchingBrace(code, i + 1) + 1;
+                continue;
             }
 
             i++;
@@ -527,9 +487,7 @@
                 var spreadEnd = findMatchingBrace(code, i);
                 var spreadExpr = code.substring(i + 1, spreadEnd).replace(/^\s*\.\.\./, '').trim();
                 // Recursively transform JSX in spread expression
-                try {
-                    spreadExpr = transformJSX(spreadExpr);
-                } catch (_) { /* keep raw spread */ }
+                spreadExpr = transformJSX(spreadExpr);
                 node.attributes.push({
                     type: 'spread',
                     value: spreadExpr
@@ -550,15 +508,8 @@
                 if (code[i] === '{') {
                     var valueEnd = findMatchingBrace(code, i);
                     var expr = code.substring(i + 1, valueEnd);
-
-                    // Try to transform JSX only when needed; if the expression
-                    // is plain JS (e.g. template literals that contain "{/*" as
-                    // text), fallback to the raw expression to avoid breaking
-                    // the surrounding code.
-                    try {
-                        expr = transformJSX(expr);
-                    } catch (_) { /* keep raw expr */ }
-
+                    // Recursively transform JSX in expression
+                    expr = transformJSX(expr);
                     attrValue = { type: 'expr', value: expr };
                     i = valueEnd + 1;
                 }
@@ -618,7 +569,7 @@
                 var expr = code.substring(i + 1, exprEnd);
 
                 // Check if comment
-                if (startsWithES5(expr.trim(), '/*')) {
+                if (expr.trim().startsWith('/*')) {
                     // Skip comment
                 } else {
                     // Recursively transform JSX in expression
@@ -689,7 +640,7 @@
             if (code[i] === '{') {
                 var exprEnd = findMatchingBrace(code, i);
                 var expr = code.substring(i + 1, exprEnd);
-                if (!startsWithES5(expr.trim(), '/*')) {
+                if (!expr.trim().startsWith('/*')) {
                     expr = transformJSX(expr);
                     node.children.push({ type: 'expression', value: expr });
                 }
@@ -723,43 +674,6 @@
         return { node: node, nextIndex: i };
     }
 
-    // SVG tag names that include uppercase letters but should still be treated as
-    // native DOM elements rather than components.
-    var svgCamelCaseTags = {
-        animateMotion: true,
-        animateTransform: true,
-        clipPath: true,
-        feBlend: true,
-        feColorMatrix: true,
-        feComponentTransfer: true,
-        feComposite: true,
-        feConvolveMatrix: true,
-        feDiffuseLighting: true,
-        feDisplacementMap: true,
-        feDistantLight: true,
-        feDropShadow: true,
-        feFlood: true,
-        feFuncA: true,
-        feFuncB: true,
-        feFuncG: true,
-        feFuncR: true,
-        feGaussianBlur: true,
-        feImage: true,
-        feMerge: true,
-        feMergeNode: true,
-        feMorphology: true,
-        feOffset: true,
-        fePointLight: true,
-        feSpecularLighting: true,
-        feSpotLight: true,
-        feTile: true,
-        feTurbulence: true,
-        foreignObject: true,
-        linearGradient: true,
-        radialGradient: true,
-        textPath: true
-    };
-
     /**
      * Generate JavaScript code from JSX AST
      */
@@ -784,12 +698,7 @@
 
         // Component or element
         var tagName = node.tagName;
-        // Treat namespaced tags and components that start with uppercase as components.
-        // Allow camelCase components (e.g., "myComponent") while preserving known
-        // camelCased SVG element names as DOM tags to avoid ReferenceErrors.
-        var hasUppercase = /[A-Z]/.test(tagName);
-        var isSVGDomTag = svgCamelCaseTags[tagName];
-        var isComponent = tagName.indexOf('.') !== -1 || /^[A-Z]/.test(tagName) || (hasUppercase && !isSVGDomTag && /[a-z]/.test(tagName[0]));
+        var isComponent = /^[A-Z]/.test(tagName);
         var tag = isComponent ? tagName : JSON.stringify(tagName);
 
         // Props
